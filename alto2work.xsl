@@ -31,6 +31,7 @@
       </xsl:variable>
       <!-- ? @FIRSTLINE @LINESPACE @RIGHT @LEFT -->
       <xsl:choose>
+        <!--
         <xsl:when test="./*[1]/alto:String[1]/@CONTENT='&#x2014;'">
           <xsl:value-of select="$lf"/>
           <item>
@@ -38,6 +39,7 @@
             <xsl:value-of select="$lf"/>
           </item>
         </xsl:when>
+        -->
         <xsl:when test="contains($style, 'Block')">
           <xsl:value-of select="$lf"/>
           <p>
