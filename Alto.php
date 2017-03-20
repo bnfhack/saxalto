@@ -2,15 +2,24 @@
 set_time_limit(-1);
 
 Alto::init();
-$test = new Alto( "../test/1025076.zip" );
-// dest file, folder is suffix
-// CBA/GFEDCBA.xml
+Alto::glob();
+
 
 class Alto {
   /** Log level */
   public $loglevel = E_ALL;
+  /** Identifiant Gallica du fichier en cours de traitement */
+  public $id;
+  /** XML de travail, transformable */
+  private $_xml;
   /** A logger, maybe a stream or a callable, used by $this->log() */
   private $_logger;
+  /** Paramètres de configuration obtenus par un fichier conf.php */
+  public static $conf;
+  /** lien à une base pour les métadonnées */
+  private static $_pdo;
+  /** Requêtes préparées */
+  private static $_q;
   /** DOM Document */
   private static $_dom;
   /** 1) un processeur XSLT, compilation des pages  */
@@ -40,10 +49,10 @@ class Alto {
     '@( [;\?!])</(i|sup)>@u' => '</$2>$1', // certaines ponctuations hors ital
     '@([,.])</(i|sup)>@u' => '</$2>$1', // certaines ponctuations hors ital
     '@<sup>Mme</sup>@' => 'M<sup>me</sup>',
-    '@ae@' => 'æ',
-    '@oe@' => 'œ',
-    '@A[Ee]@' => 'Æ',
-    '@O[Ee]@' => 'Œ',
+    // '@ae@' => 'æ',
+    // '@oe@' => 'œ',
+    // '@A[Ee]@' => 'Æ',
+    // '@O[Ee]@' => 'Œ',
     '@<small>\s*<i>([0-9]+\.?)</i>@' => '<small>$1', // n° de note à libérer
     '@<sup>in-([0-9]+)°</sup>@' => 'in-$1°',
     '@<sup>([0-9IVXVLCMxvi]+)(er?|[èe]re)</sup>@u' => '<num>$1<sup>$2</sup></num>',
@@ -72,7 +81,7 @@ class Alto {
   {
     if ( is_string($logger) ) $logger = fopen($logger, 'w');
     $this->_logger = $logger;
-    $altoid = pathinfo( $altozip, PATHINFO_BASENAME );
+    $id = pathinfo( $altozip, PATHINFO_BASENAME );
 
     $zip = new ZipArchive();
     $res = $zip->open( $altozip ); //stocker le code erreur en cas d’échec
@@ -86,52 +95,87 @@ class Alto {
       // ramasser les entrées pour les trier
       for ( $i=0 ; $i < $zip->numFiles ; $i++ ) {
         $row = $zip->statIndex( $i );
-        if ( $row['size'] == 0 ) continue; // dossier
+        if ( $row['size'] == 0 ) { // probablement un dossier
+          // si le nom de dossier est un nombre, probablement l'identifiant gallica
+          if ( 0+$row['name'] && ($id !== 0+$row['name']) ) { // attention !==
+            $id = 0+$row['name'];
+          }
+          continue;
+        }
         $entries[] = $row['name'];
       }
       sort( $entries );
-      $xml = array();
-      $xml[] = '<book xmlns="http://www.tei-c.org/ns/1.0">';
+      $buf = array();
+      $buf[] = '<book xmlns="http://www.tei-c.org/ns/1.0">';
       // print_r( $entries )."\n";
       foreach ( $entries as $path ) {
         // $oldError=set_error_handler("Alto::err", E_ALL );
         // ?? quelles erreurs ?
         self::$_dom->loadXML( $zip->getFromName( $path ) );
         // restore_error_handler();
-        $xml[] = self::$_alto2work->transformToXml( self::$_dom );
+        // obligé de transformer page après page, sinon le dom de la totale fera sauter la banque
+        $buf[] = self::$_alto2work->transformToXml( self::$_dom );
       }
-      $xml[] = '</book>';
+      $buf[] = '</book>';
       $zip->close();
     }
-    $xml = implode( "\n", $xml );
-    $xml=preg_replace( array_keys( self::$_preg ), array_values( self::$_preg ), $xml );
-    echo $xml;
+    unset( $zip );
+    $this->id = $id;
+    $this->_xml = implode( "\n", $buf );
+    unset( $buf );
+    $this->_xml = preg_replace( array_keys( self::$_preg ), array_values( self::$_preg ), $this->_xml );
   }
 
 
   /**
    * Command line interface for the class
    */
-  public static function alto2tei() {
-    $xml='<?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet type="text/xsl" href="../../../lib/teipub/tei2html.xsl"?>
-<?xml-stylesheet type="text/css" href="http://svn.code.sf.net/p/algone/code/teibook/teibook.css"?>
-<TEI xmlns="http://www.tei-c.org/ns/1.0" xml:lang="fr">
+  public function tei( $destfile=null )
+  {
+    $teiHeader = array();
+    $ark = null;
+    $teiHeader[] = '<teiHeader>';
+    if ( self::$_q ) {
+      self::$_q['gallica']->execute( array( $this->id ) );
+      $doc = self::$_q['gallica']->fetch();
+      // si pas trouvé on balance les erreurs
+      $ark = $doc['docark'];
+      $teiHeader[] = '<fileDesc>';
+      $teiHeader[] = '<titleStmt>';
+      $teiHeader[] = '<title>'.$doc['title'].'</title>';
+      self::$_q['author']->execute( array( $doc['docid'] ) );
+      while ( $row = self::$_q['author']->fetch() ) {
+        $teiHeader[] = '<author key="'.$row['id'].'">'.$row['family'].", ".$row['given'].' ('.$row['date'].')</author>';
+      }
+      // récupérer les auteurs
+      $teiHeader[] = '</titleStmt>';
+      $teiHeader[] = '<publicationStmt>';
+      $teiHeader[] = '<publisher>'.self::$conf['publisher'].'</publisher>';
+      $teiHeader[] = '</publicationStmt>';
+      $teiHeader[] = '<sourceDesc>';
+      $teiHeader[] = '<bibl>';
+      $teiHeader[] = '<idno>http://gallica.bnf.fr/ark:/12148/'.$doc['gallark'].'</idno>';
+      $teiHeader[] = '<publisher>'.$doc['publisher'].'</publisher>';
+      $teiHeader[] = '<date when="'.$doc['year'].'">'.$doc['date'].'</date>';
+      $teiHeader[] = '</bibl>';
+      $teiHeader[] = '</sourceDesc>';
+      $teiHeader[] = '</fileDesc>';
+    }
+    $teiHeader[] = '</teiHeader>';
+    $xml = '<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0" xml:lang="fr" n="'.$this->id.'" xml:id="'.$ark.'">
+'.implode("\n", $teiHeader ).'
   <text>
     <body>
-'.$xml.'
+'.$this->_xml.'
     </body>
   </text>
 </TEI>';
-    // echo $xml;
-    $oldError=set_error_handler("Alto::err", E_ALL);
-    self::$dom->loadXML($xml);
-    restore_error_handler();
-    if (count(self::$log)) {
-      echo "    " . implode(self::$log, "\n    "), "\n";
-      self::$log = array();
-    }
-    $xml=self::$work2tei->transformToXml(self::$dom);
+    // LIBXML_NOENT | LIBXML_NONET | LIBXML_NSCLEAN | LIBXML_NOCDATA | LIBXML_NOWARNING
+    // $oldError=set_error_handler("Alto::err", E_ALL);
+    self::$_dom->loadXML($xml);
+    // restore_error_handler();
+    $xml = self::$_work2tei->transformToXml( self::$_dom) ;
     $preg=array(
       '@<\?div\?>@'=>'<div>', // écrire les <div>
       '@<\?div /\?>@'=>'</div>', // écrire les </div>
@@ -140,7 +184,14 @@ class Alto {
       '@ +(<note)@' => '$1', // coller l’appel de note
     );
     $xml=preg_replace(array_keys($preg), array_values($preg), $xml);
-    file_put_contents($destfile, $xml);
+    if ( $destfile != null ) {
+      if (!is_dir( dirname( $destfile ) ) ) {
+        mkdir( dirname( $destfile ), 0775, true );
+        @chmod( dirname( $destfile ), 0775 );  // let @, if www-data is not owner but allowed to write
+      }
+      file_put_contents($destfile, $xml);
+    }
+    return $xml;
   }
 
   /**
@@ -149,6 +200,9 @@ class Alto {
   static function init()
   {
     self::$_dom = new DOMDocument( '1.0', 'UTF-8' );
+    self::$_dom->preserveWhiteSpace = false;
+    self::$_dom->formatOutput=true;
+    self::$_dom->substituteEntities=true;
     self::$_dom->load( dirname(__FILE__).'/alto2work.xsl' );
     self::$_alto2work = new XSLTProcessor();
     self::$_alto2work->registerPHPFunctions();
@@ -157,10 +211,51 @@ class Alto {
     self::$_work2tei = new XSLTProcessor();
     self::$_work2tei->registerPHPFunctions();
     self::$_work2tei->importStyleSheet( self::$_dom );
+    if ( file_exists( $f=dirname( __FILE__ ).'/conf.php' ) ) self::$conf = include( $f );
+    if ( isset( self::$conf['sqlite'] ) ) {
+      if ( !file_exists( self::$conf['sqlite'] )) exit( $file." doesn’t exist!\n");
+      self::$_pdo = new PDO("sqlite:".self::$conf['sqlite'], "charset=UTF-8");
+      self::$_pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_WARNING ); // get error as classical PHP warn
+      self::$_pdo->exec("PRAGMA temp_store = 2;"); // store temp table in memory (efficiency)
+      self::$_q = array();
+      self::$_q['gallica'] = self::$_pdo->prepare( "
+SELECT
+  document.id as docid,
+  document.ark as docark,
+  document.title as title,
+  document.date as date,
+  document.year as year,
+  document.publisher as publisher,
+  gallica.ark as gallark,
+  gallica.id as gallid
+FROM gallica, document WHERE gallica.id = ? AND gallica.document = document.id
+      ");
+      self::$_q['author'] = self::$_pdo->prepare( "SELECT person.* FROM person, contribution WHERE contribution.document = ? AND contribution.person = person.id; ");
+    }
+
+  }
+
+  /**
+   * Tourner dans le glob et transformer en TEI
+   */
+  public static function glob()
+  {
+    if ( !self::$conf ) return self::log( "Pas de fichier de configuration chargé" );
+    if ( !isset( self::$conf['srcglob'] ) ) return self::log( "srcglob ?" );
+    $destdir = dirname(__FILE__);
+    if ( isset( self::$conf['destdir'] ) ) $destdir = self::$conf['destdir'];
+    $destir= rtrim( $destdir, "\\/ ")."/";
+    foreach( glob( self::$conf['srcglob'] ) as $srcfile ) {
+      $alto = new Alto( $srcfile );
+      $destfile =  $destdir.substr($alto->id, -3)."/".$alto->id.".xml";
+      echo $destfile."\n";
+      $alto->tei( $destfile );
+    }
   }
 
   /** record errors in a log variable, need to be public to used by loadXML */
-  public static function err( $errno, $errstr, $errfile, $errline, $errcontext) {
+  public static function err( $errno, $errstr, $errfile, $errline, $errcontext)
+  {
     if(strpos($errstr, "xmlParsePITarget: invalid name prefix 'xml'") !== FALSE) return;
     self::$log[]=$errstr;
   }

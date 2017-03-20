@@ -7,6 +7,7 @@
   exclude-result-prefixes="alto tei"
   >
   <xsl:output method="xml" indent="yes" encoding="UTF-8"/>
+  <xsl:variable name="gallica" select="/tei:TEI/tei:teiHeader/tei:fileDesc/tei:sourceDesc/*/tei:idno"/>
   <xsl:variable name="lf" select="'&#10;'"/>
   <xsl:variable name="num">0123456789</xsl:variable>
   <!-- Majuscules, pour conversions. -->
@@ -33,12 +34,24 @@
       </xsl:call-template>
     </xsl:copy>
   </xsl:template>
+  <xsl:template match="tei:book">
+    <xsl:apply-templates/>
+  </xsl:template>
   <xsl:template match="tei:page">
     <pb>
       <xsl:copy-of select="@xml:id|@xml:type"/>
       <xsl:attribute name="n">
         <xsl:value-of select="tei:fw"/>
       </xsl:attribute>
+      <xsl:variable name="f" select="number( substring-after(@xml:id, 'PAG_') )"/>
+      <xsl:if test="$gallica and $f &gt; 0">
+        <xsl:attribute name="corresp">
+          <xsl:value-of select="$gallica"/>
+          <xsl:text>/f</xsl:text>
+          <xsl:value-of select="$f"/>
+          <xsl:text>.image</xsl:text>
+        </xsl:attribute>
+      </xsl:if>
     </pb>
     <xsl:apply-templates/>
   </xsl:template>
