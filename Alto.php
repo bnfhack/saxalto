@@ -11,6 +11,9 @@ if (php_sapi_name() == "cli") {
     $n numéro de thread et modulo des fichiers traités dans la liste
 ');
   $action = array_shift($_SERVER['argv']);
+  $destdir = dirname(__FILE__);
+  if ( isset( Alto::$conf['destdir'] ) ) $destdir = Alto::$conf['destdir'];
+  $destir= rtrim( $destdir, "\\/ ")."/";
   if ( $action == "threads" ) {
     if ( !isset( Alto::$conf['srcdir'] ) ) die( "conf.php['srcdir'] ?\n" );
     $writer = fopen( Alto::$conf['altolist'], "w" );
@@ -22,9 +25,6 @@ if (php_sapi_name() == "cli") {
     }
   }
   else if ( is_numeric( $action ) ) {
-    $destdir = dirname(__FILE__);
-    if ( isset( Alto::$conf['destdir'] ) ) $destdir = Alto::$conf['destdir'];
-    $destir= rtrim( $destdir, "\\/ ")."/";
     $reader = fopen( Alto::$conf['altolist'], "r" );
     $modulo = Alto::$conf['threads'];
     $i = 0;
@@ -35,9 +35,15 @@ if (php_sapi_name() == "cli") {
       $alto = new Alto( trim($line) );
       $destfile =  $destdir.substr($alto->id, -3)."/".$alto->id.".xml";
       echo $action.'-'.($i-1).' '.$destfile."\n";
-      // $alto->tei( $destfile );
+      $alto->tei( $destfile );
     }
     fclose( $reader );
+  }
+  else if ( file_exists( $action ) ) {
+    $alto = new Alto( $action );
+    $destfile =  $destdir.substr($alto->id, -3)."/".$alto->id.".xml";
+    echo $destfile."\n";
+    $alto->tei( $destfile );
   }
   else {
     die( $action." — action inconnue\n" );
