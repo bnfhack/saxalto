@@ -1,3 +1,5 @@
 conf.php
 *.zip
 *.xml
+*.log
+altolist.txt

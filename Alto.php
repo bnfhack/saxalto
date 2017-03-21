@@ -2,7 +2,47 @@
 set_time_limit(-1);
 
 Alto::init();
-Alto::glob();
+// si pas d’arguments, démarre les threads
+if (php_sapi_name() == "cli") {
+  array_shift($_SERVER['argv']); // shift first arg, the script filepath
+  if (!count($_SERVER['argv'])) exit('  php Alto.php threads
+    liste les fichiers pointés dans conf.php["srcdir"] et lance les threads
+  php Alto.php $n
+    $n numéro de thread et modulo des fichiers traités dans la liste
+');
+  $action = array_shift($_SERVER['argv']);
+  if ( $action == "threads" ) {
+    if ( !isset( Alto::$conf['srcdir'] ) ) die( "conf.php['srcdir'] ?\n" );
+    $writer = fopen( Alto::$conf['altolist'], "w" );
+    Alto::listfiles( Alto::$conf['srcdir'], $writer );
+    fclose( $writer );
+    for( $i=0; $i < Alto::$conf['threads'] ; $i++ ) {
+      exec( "php ".__FILE__." $i > $i.log &" );
+      // popen( "php ".__FILE__." $i ", "r" );
+    }
+  }
+  else if ( is_numeric( $action ) ) {
+    $destdir = dirname(__FILE__);
+    if ( isset( Alto::$conf['destdir'] ) ) $destdir = Alto::$conf['destdir'];
+    $destir= rtrim( $destdir, "\\/ ")."/";
+    $reader = fopen( Alto::$conf['altolist'], "r" );
+    $modulo = Alto::$conf['threads'];
+    $i = 0;
+    while ( ( $line = fgets( $reader ) ) !== false ) {
+      $i++;
+      if ( ( ($i-1) % $modulo) != $action ) continue;
+      // echo $action."-".$i." ".($i % $modulo)." ".$line;
+      $alto = new Alto( trim($line) );
+      $destfile =  $destdir.substr($alto->id, -3)."/".$alto->id.".xml";
+      echo $action.'-'.($i-1).' '.$destfile."\n";
+      // $alto->tei( $destfile );
+    }
+    fclose( $reader );
+  }
+  else {
+    die( $action." — action inconnue\n" );
+  }
+}
 
 
 class Alto {
@@ -123,7 +163,7 @@ class Alto {
     $this->id = $id;
     $this->_xml = implode( "\n", $buf );
     unset( $buf );
-    $this->_xml = preg_replace( array_keys( self::$_preg ), array_values( self::$_preg ), $this->_xml );
+    $this->_xml = preg_replace( array_keys( self::$_preg ), array_values( self::$_preg ), $this->_xml  );
   }
 
 
@@ -199,6 +239,10 @@ class Alto {
    */
   static function init()
   {
+    if ( !file_exists( $f=dirname( __FILE__ ).'/conf.php' ) ) {
+      die( "conf.php ? Renommez _conf.php et changez les paramètres nécessaires à votre convenance.\n" );
+    }
+    self::$conf = include( $f );
     self::$_dom = new DOMDocument( '1.0', 'UTF-8' );
     self::$_dom->preserveWhiteSpace = false;
     self::$_dom->formatOutput=true;
@@ -211,7 +255,6 @@ class Alto {
     self::$_work2tei = new XSLTProcessor();
     self::$_work2tei->registerPHPFunctions();
     self::$_work2tei->importStyleSheet( self::$_dom );
-    if ( file_exists( $f=dirname( __FILE__ ).'/conf.php' ) ) self::$conf = include( $f );
     if ( isset( self::$conf['sqlite'] ) ) {
       if ( !file_exists( self::$conf['sqlite'] )) exit( $file." doesn’t exist!\n");
       self::$_pdo = new PDO("sqlite:".self::$conf['sqlite'], "charset=UTF-8");
@@ -232,24 +275,23 @@ FROM gallica, document WHERE gallica.id = ? AND gallica.document = document.id
       ");
       self::$_q['author'] = self::$_pdo->prepare( "SELECT person.* FROM person, contribution WHERE contribution.document = ? AND contribution.person = person.id; ");
     }
-
   }
 
   /**
-   * Tourner dans le glob et transformer en TEI
+   * Chercher les chemins des alto.zip
    */
-  public static function glob()
+  public static function listfiles( $srcdir, $writer )
   {
-    if ( !self::$conf ) return self::log( "Pas de fichier de configuration chargé" );
-    if ( !isset( self::$conf['srcglob'] ) ) return self::log( "srcglob ?" );
-    $destdir = dirname(__FILE__);
-    if ( isset( self::$conf['destdir'] ) ) $destdir = self::$conf['destdir'];
-    $destir= rtrim( $destdir, "\\/ ")."/";
-    foreach( glob( self::$conf['srcglob'] ) as $srcfile ) {
-      $alto = new Alto( $srcfile );
-      $destfile =  $destdir.substr($alto->id, -3)."/".$alto->id.".xml";
-      echo $destfile."\n";
-      $alto->tei( $destfile );
+    $srcdir = rtrim( $srcdir, "\\/ ")."/";
+    $handle = opendir( $srcdir );
+    // $altolist
+    if ( !$handle ) die( $srcdir." ILLISIBLE\n" );
+    while (false !== ($entry = readdir($handle))) {
+      if ( $entry[0] == '.' ) continue;
+      if ( is_dir( $srcdir.$entry ) ) self::listfiles( $srcdir.$entry, $writer );
+      $ext = pathinfo( $entry, PATHINFO_EXTENSION );
+      if ( $ext != "zip" ) continue;
+      fwrite( $writer, $srcdir.$entry."\n" );
     }
   }
 
