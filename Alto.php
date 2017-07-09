@@ -240,7 +240,7 @@ class Alto {
     }
     $errors = libxml_get_errors();
     foreach ($errors as $error) {
-      if ( $error->code == 68 ) // ??? pas compris
+      if ( $error->code == 68 ); // ??? pas compris
       else if ( $error->code == 539 )
         $this->log( E_USER_WARNING, "ark notice introuvable " );
       else {
