@@ -244,7 +244,7 @@ class Alto {
       else if ( $error->code == 539 )
         $this->log( E_USER_WARNING, "ark notice introuvable " );
       else {
-        $this->log( E_USER_WARNING, trim( error->message)." l. ".$error->line);
+        $this->log( E_USER_WARNING, trim( $error->message )." l. ".$error->line);
       }
     }
     libxml_clear_errors();
