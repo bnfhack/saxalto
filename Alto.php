@@ -7,9 +7,10 @@ if (php_sapi_name() == "cli") {
   array_shift($_SERVER['argv']); // shift first arg, the script filepath
   if (!count($_SERVER['argv'])) exit('  php Alto.php threads
     liste les fichiers pointés dans conf.php["srcdir"] et lance les threads
-  php Alto.php $n
-    $n numéro de thread et modulo des fichiers traités dans la liste
 ');
+  //   php Alto.php $n
+  // $n numéro de thread et modulo des fichiers traités dans la liste
+
   $action = array_shift($_SERVER['argv']);
   $destdir = dirname(__FILE__);
   if ( isset( Alto::$conf['destdir'] ) ) $destdir = Alto::$conf['destdir'];
@@ -31,11 +32,12 @@ if (php_sapi_name() == "cli") {
     while ( ( $line = fgets( $reader ) ) !== false ) {
       $i++;
       if ( ( ($i-1) % $modulo) != $action ) continue;
-      // echo $action."-".$i." ".($i % $modulo)." ".$line;
-      $alto = new Alto( trim($line) );
-      $destfile =  $destdir.substr($alto->id, -3)."/".$alto->id.".xml";
+      $id = pathinfo( trim($line), PATHINFO_FILENAME );
+      $destfile =  $destdir.substr( $id, -3 )."/".$id.".xml";
       echo $action.'-'.($i-1).' '.$destfile."\n";
+      $alto = new Alto( trim($line) );
       $alto->tei( $destfile );
+      echo " — DONE\n";
     }
     fclose( $reader );
   }
@@ -136,7 +138,7 @@ class Alto {
       return;
     }
     else {
-      $this->log( E_USER_NOTICE, "\textraction de $altozip" );
+      $this->log( E_USER_NOTICE, " — extraction de $altozip" );
       $entries = array();
       // ramasser les entrées pour les trier
       for ( $i=0 ; $i < $zip->numFiles ; $i++ ) {
@@ -190,8 +192,20 @@ class Alto {
       $teiHeader[] = '<titleStmt>';
       $teiHeader[] = '<title>'.$doc['title'].'</title>';
       self::$_q['author']->execute( array( $doc['docid'] ) );
-      while ( $row = self::$_q['author']->fetch() ) {
-        $teiHeader[] = '<author key="'.$row['id'].'">'.$row['family'].", ".$row['given'].' ('.$row['date'].')</author>';
+      while ( $person = self::$_q['author']->fetch() ) {
+        self::$_q['role']->execute( array( $person['role'] ) );
+        $role = self::$_q['role']->fetch();
+        $date = "";
+        if ( $person['date'] ) $date = ' ('.$person['date'].')';
+        if ( $person['isauthor'] ) {
+          $teiHeader[] = '<author role="'.$role['label'].'" key="'.$person['id'].'">'.$person['family'].", ".$person['given'].$date.'</author>';
+        }
+        else {
+          $teiHeader[] = '<respStmt>
+  <resp key="'.$role['id'].'">'.$role['label'].'</resp>
+  <name key="'.$person['id'].'">'.$person['family'].", ".$person['given'].$date.'</name>
+</respStmt>';
+        }
       }
       // récupérer les auteurs
       $teiHeader[] = '</titleStmt>';
@@ -219,9 +233,23 @@ class Alto {
 </TEI>';
     // LIBXML_NOENT | LIBXML_NONET | LIBXML_NSCLEAN | LIBXML_NOCDATA | LIBXML_NOWARNING
     // $oldError=set_error_handler("Alto::err", E_ALL);
-    self::$_dom->loadXML($xml);
-    // restore_error_handler();
-    $xml = self::$_work2tei->transformToXml( self::$_dom) ;
+    $previous_value = libxml_use_internal_errors(TRUE);
+    if ( !self::$_dom->loadXML( $xml ) ) {
+      $this->log( E_USER_ERROR, "ERREUR XML avec ".$this->id." (".$destfile.")\n");
+      return false;
+    }
+    $errors = libxml_get_errors();
+    foreach ($errors as $error) {
+      if ( $error->code == 68 ) // ??? pas compris
+      else if ( $error->code == 539 )
+        $this->log( E_USER_WARNING, "ark notice introuvable " );
+      else {
+        $this->log( E_USER_WARNING, trim( error->message)." l. "+error->line);
+      }
+    }
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous_value);
+    $xml = self::$_work2tei->transformToXml( self::$_dom ) ;
     $preg=array(
       '@<\?div\?>@'=>'<div>', // écrire les <div>
       '@<\?div /\?>@'=>'</div>', // écrire les </div>
@@ -279,7 +307,8 @@ SELECT
   gallica.id as gallid
 FROM gallica, document WHERE gallica.id = ? AND gallica.document = document.id
       ");
-      self::$_q['author'] = self::$_pdo->prepare( "SELECT person.* FROM person, contribution WHERE contribution.document = ? AND contribution.person = person.id; ");
+      self::$_q['author'] = self::$_pdo->prepare( "SELECT person.*, contribution.role AS role, contribution.writes AS isauthor FROM person, contribution WHERE contribution.document = ? AND contribution.person = person.id; ");
+      self::$_q['role'] = self::$_pdo->prepare( "SELECT * FROM role WHERE id = ?" );
     }
   }
 
