@@ -1,6 +1,6 @@
 <?php  // encoding="UTF-8"
 set_time_limit(-1);
-
+// charge conf.php et configure la base sqlite
 Alto::init();
 // si pas d’arguments, démarre les threads
 if (php_sapi_name() == "cli") {
@@ -15,7 +15,12 @@ if (php_sapi_name() == "cli") {
   $destdir = dirname(__FILE__);
   if ( isset( Alto::$conf['destdir'] ) ) $destdir = Alto::$conf['destdir'];
   $destir= rtrim( $destdir, "\\/ ")."/";
-  if ( $action == "threads" ) {
+
+  // mettre à jour les <teiHeader> avec une nouvelle base
+  if ( $action == "upheader" ) {
+    Alto::upheader( $destdir );
+  }
+  else if ( $action == "threads" ) {
     if ( !isset( Alto::$conf['srcdir'] ) ) die( "conf.php['srcdir'] ?\n" );
     $writer = fopen( Alto::$conf['altolist'], "w" );
     Alto::listfiles( Alto::$conf['srcdir'], $writer );
@@ -174,57 +179,103 @@ class Alto {
     $this->_xml = preg_replace( array_keys( self::$_preg ), array_values( self::$_preg ), $this->_xml  );
   }
 
-
   /**
-   * Command line interface for the class
+   *
    */
-  public function tei( $destfile=null )
+  static function upheader( $path )
   {
-    $teiHeader = array();
-    $ark = null;
-    $teiHeader[] = '<teiHeader>';
+    if ( is_dir( $path ) ) {
+      $path = rtrim( $path, "\\/ ")."/";
+      $dh = opendir( $path);
+      while ( ($file = readdir($dh) ) !== false) {
+        if ( $file[0] == '.' ) continue;
+        self::upheader( $path.$file );
+      }
+      closedir($dh);
+      return;
+    }
+    else if ( is_file( $path ) ) {
+      $info = pathinfo( $path );
+      if ( $info['extension'] != 'xml' ) return;
+      $id = $info['filename'];
+      $xml = file_get_contents( $path );
+      $from = strpos( $xml, "<teiHeader>" );
+      $to = strpos( $xml, $s="</teiHeader>" ) + strlen( $s );
+      if ( !$from || !$to || $to < $from  ) {
+        return ( print( "<teiHeader/> not found ".$from." ".$to." in ".$path."\n" ) );
+      }
+      $header = self::teiheader( $id );
+      if ( !$header ) {
+        return print( "NO RECORD in ".self::$conf['sqlite']." for ".$path."\n");
+      }
+      file_put_contents( $path, substr( $xml, 0, $from ).$header.substr( $xml, $to ) );
+    }
+  }
+
+  static function teiheader( $id )
+  {
+    $xml = array();
+    $xml[] = '<teiHeader>';
     if ( self::$_q ) {
-      self::$_q['gallica']->execute( array( $this->id ) );
+      self::$_q['gallica']->execute( array( $id ) );
       $doc = self::$_q['gallica']->fetch();
-      // si pas trouvé on balance les erreurs
+      // si pas trouvé on laisse partir les erreurs
       $ark = $doc['docark'];
-      $teiHeader[] = '<fileDesc>';
-      $teiHeader[] = '<titleStmt>';
-      $teiHeader[] = '<title>'.$doc['title'].'</title>';
+      $xml[] = '<fileDesc>';
+      $xml[] = '<titleStmt>';
+      $xml[] = '<title>'.$doc['title'].'</title>';
       self::$_q['author']->execute( array( $doc['docid'] ) );
       while ( $person = self::$_q['author']->fetch() ) {
         self::$_q['role']->execute( array( $person['role'] ) );
         $role = self::$_q['role']->fetch();
         $date = "";
         if ( $person['date'] ) $date = ' ('.$person['date'].')';
+        $given = "";
+        if ( $person['given'] ) $given = ", ".$person['given'];
         if ( $person['isauthor'] ) {
-          $teiHeader[] = '<author role="'.$role['label'].'" key="'.$person['id'].'">'.$person['family'].", ".$person['given'].$date.'</author>';
+          $xml[] = '<author role="'.$role['label'].'" key="'.$person['id'].'">'.$person['family'].$given.$date.'</author>';
         }
         else {
-          $teiHeader[] = '<respStmt>
+          $xml[] = '<respStmt>
   <resp key="'.$role['id'].'">'.$role['label'].'</resp>
-  <name key="'.$person['id'].'">'.$person['family'].", ".$person['given'].$date.'</name>
+  <name key="'.$person['id'].'">'.$person['family'].$given.$date.'</name>
 </respStmt>';
         }
       }
       // récupérer les auteurs
-      $teiHeader[] = '</titleStmt>';
-      $teiHeader[] = '<publicationStmt>';
-      $teiHeader[] = '<publisher>'.self::$conf['publisher'].'</publisher>';
-      $teiHeader[] = '</publicationStmt>';
-      $teiHeader[] = '<sourceDesc>';
-      $teiHeader[] = '<bibl>';
-      $teiHeader[] = '<idno>http://gallica.bnf.fr/ark:/12148/'.$doc['gallark'].'</idno>';
-      $teiHeader[] = '<publisher>'.$doc['publisher'].'</publisher>';
-      $teiHeader[] = '<date when="'.$doc['year'].'">'.$doc['date'].'</date>';
-      $teiHeader[] = '</bibl>';
-      $teiHeader[] = '</sourceDesc>';
-      $teiHeader[] = '</fileDesc>';
+      $xml[] = '</titleStmt>';
+      $xml[] = '<publicationStmt>';
+      $xml[] = '<publisher>'.self::$conf['publisher'].'</publisher>';
+      $xml[] = '</publicationStmt>';
+      if ( $doc['volumes'] > 1 ) {
+        $xml[] = '<seriesStmt>';
+        $xml[] = '<title level="s">'.$doc['title'].'</title>';
+        if ( $doc['galltitle'] ) $xml[] = '<title level="a">'.$doc['galltitle'].'</title>';
+        $xml[] = '<biblScope unit="volumes" n="'.$doc['volumes'].'"/>';
+        $xml[] = '<idno>'.$doc['docark'].'</idno>';
+        $xml[] = '</seriesStmt>';
+      }
+      $xml[] = '<sourceDesc>';
+      $xml[] = '<bibl>';
+      $xml[] = '<idno>http://gallica.bnf.fr/ark:/12148/'.$doc['gallark'].'</idno>';
+      $xml[] = '<publisher>'.$doc['publisher'].'</publisher>';
+      $xml[] = '<date when="'.$doc['year'].'">'.$doc['date'].'</date>';
+      $xml[] = '</bibl>';
+      $xml[] = '</sourceDesc>';
+      $xml[] = '</fileDesc>';
     }
-    $teiHeader[] = '</teiHeader>';
+    $xml[] = '</teiHeader>';
+    return implode("\n", $xml );
+  }
+
+  /**
+   * Command line interface for the class
+   */
+  public function tei( $destfile=null )
+  {
     $xml = '<?xml version="1.0" encoding="UTF-8"?>
-<TEI xmlns="http://www.tei-c.org/ns/1.0" xml:lang="fr" n="'.$this->id.'" xml:id="'.$ark.'">
-'.implode("\n", $teiHeader ).'
+<TEI xmlns="http://www.tei-c.org/ns/1.0" xml:lang="fr" n="'.$this->id.'">
+'.teiheader( $this->id ).'
   <text>
     <body>
 '.$this->_xml.'
@@ -303,7 +354,9 @@ SELECT
   document.date as date,
   document.year as year,
   document.publisher as publisher,
+  document.volumes as volumes,
   gallica.ark as gallark,
+  gallica.title as galltitle,
   gallica.id as gallid
 FROM gallica, document WHERE gallica.id = ? AND gallica.document = document.id
       ");
