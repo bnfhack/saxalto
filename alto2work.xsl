@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<xsl:transform version="1.1"
-  xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
-  xmlns:alto="http://bibnum.bnf.fr/ns/alto_prod"
-  xmlns="http://www.tei-c.org/ns/1.0"
-  exclude-result-prefixes="alto"
-  >
-  <xsl:key name="style" match="alto:TextStyle | alto:ParagraphStyle" use="@ID"/>
-  <xsl:output method="xml" indent="no" encoding="UTF-8" omit-xml-declaration="yes"/>
+<xsl:transform exclude-result-prefixes="alto" version="1.1" xmlns="http://www.tei-c.org/ns/1.0" xmlns:alto="http://www.loc.gov/standards/alto/ns-v3#" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:key match="alto:TextStyle | alto:ParagraphStyle" name="style" use="@ID"/>
+  <xsl:output encoding="UTF-8" indent="no" method="xml" omit-xml-declaration="yes"/>
   <xsl:variable name="lf" select="'&#10;'"/>
+  <xsl:template match="/">
+    <book>
+      <xsl:apply-templates/>
+    </book>
+  </xsl:template>
   <xsl:template match="alto:Page">
-    <page>
+    <div type="page">
       <xsl:attribute name="xml:id">
         <xsl:value-of select="@ID"/>
       </xsl:attribute>
@@ -20,55 +20,25 @@
       </xsl:if>
       <xsl:apply-templates select="*"/>
       <xsl:value-of select="$lf"/>
-    </page>    
+    </div>
   </xsl:template>
   <xsl:template match="*">
     <xsl:apply-templates select="*"/>
   </xsl:template>
   <xsl:template match="alto:TextBlock">
-      <xsl:variable name="style">
-        <xsl:call-template name="style"/>
-      </xsl:variable>
-      <!-- ? @FIRSTLINE @LINESPACE @RIGHT @LEFT -->
-      <xsl:choose>
-        <!--
-        <xsl:when test="./*[1]/alto:String[1]/@CONTENT='&#x2014;'">
-          <xsl:value-of select="$lf"/>
-          <item>
-            <xsl:apply-templates select="*"/>
-            <xsl:value-of select="$lf"/>
-          </item>
-        </xsl:when>
-        -->
-        <xsl:when test="contains($style, 'Block')">
-          <xsl:value-of select="$lf"/>
-          <p>
-            <xsl:apply-templates select="*"/>
-            <xsl:value-of select="$lf"/>
-          </p>
-        </xsl:when>
-        <xsl:when test="contains($style, 'Left')">
-          <xsl:value-of select="$lf"/>
-          <p rend="left">
-            <xsl:apply-templates select="*"/>
-            <xsl:value-of select="$lf"/>
-          </p>
-        </xsl:when>
-        <xsl:when test="contains($style, 'Center')">
-          <xsl:value-of select="$lf"/>
-          <p rend="center">
-            <xsl:apply-templates select="*"/>
-            <xsl:value-of select="$lf"/>
-          </p>
-        </xsl:when>
-        <xsl:otherwise>
-          <xsl:value-of select="$lf"/>
-          <p>
-            <xsl:apply-templates select="*"/>
-            <xsl:value-of select="$lf"/>
-          </p>
-        </xsl:otherwise>
-      </xsl:choose>
+    <xsl:variable name="style">
+      <xsl:call-template name="style"/>
+    </xsl:variable>
+    <xsl:value-of select="$lf"/>
+    <p>
+      <xsl:if test="normalize-space($style) != ''">
+        <xsl:attribute name="rend">
+          <xsl:value-of select="normalize-space($style)"/>
+        </xsl:attribute>
+      </xsl:if>
+      <xsl:apply-templates select="*"/>
+      <xsl:value-of select="$lf"/>
+    </p>
   </xsl:template>
   <xsl:template match="alto:TextLine">
     <xsl:variable name="style">
@@ -77,6 +47,21 @@
     </xsl:variable>
     <xsl:value-of select="$lf"/>
     <xsl:variable name="size" select="normalize-space(substring-before(substring-after($style, 'size'), ' '))"/>
+    <xsl:variable name="ohpos">
+      <xsl:choose>
+        <xsl:when test="preceding-sibling::alto:TextLine[1]">
+          <xsl:value-of select="preceding-sibling::alto:TextLine[1]/@HPOS"/>
+        </xsl:when>
+        <xsl:when test="following-sibling::alto:TextLine[1]">
+          <xsl:value-of select="following-sibling::alto:TextLine[1]/@HPOS"/>
+        </xsl:when>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:variable name="width" select="../@WIDTH"/>
+    <xsl:variable name="hpos" select="@HPOS"/>
+    <xsl:if test="$width &gt; 0 and (($hpos - $ohpos) div $width) &gt; 0.04">
+      <space>    </space>
+    </xsl:if>
     <xsl:variable name="span">
       <xsl:choose>
         <!-- pb sur de l’italique globale avec de l’italique locale -->
@@ -112,6 +97,7 @@
         <xsl:copy-of select="$span"/>
       </xsl:otherwise>
     </xsl:choose>
+    <lb/>
   </xsl:template>
   <xsl:template name="style">
     <xsl:param name="name" select="normalize-space(@STYLEREFS)"/>
@@ -127,21 +113,21 @@
       </xsl:when>
       <xsl:otherwise>
         <xsl:variable name="style" select="key('style', $name)"/>
-        <xsl:text> </xsl:text>
-        <xsl:value-of select="$style/@FONTSTYLE"/>
-        <xsl:text> </xsl:text>
-        <xsl:value-of select="$style/@FONTFAMILY"/>
+        <xsl:choose>
+          <xsl:when test="$style/@ALIGN = 'Block'"> block</xsl:when>
+          <xsl:when test="$style/@ALIGN = 'Center'"> center</xsl:when>
+          <xsl:when test="$style/@ALIGN = 'Right'"> right</xsl:when>
+        </xsl:choose>
+        <xsl:if test="number($style/@LINESPACE) &gt;= 15"> big</xsl:if>
+        <xsl:if test="number($style/@FIRSTLINE) &gt;= 15"> indent</xsl:if>
+        <xsl:if test="$style/@FONTSTYLE">
+          <xsl:text> </xsl:text>
+          <xsl:value-of select="$style/@FONTSTYLE"/>
+        </xsl:if>
         <xsl:if test="$style/@FONTSIZE">
           <xsl:text> size</xsl:text>
           <xsl:value-of select="$style/@FONTSIZE"/>
         </xsl:if>
-        <xsl:if test="$style/@FIRSTLINE">
-          <xsl:text> indent</xsl:text>
-          <xsl:value-of select="$style/@FIRSTLINE"/>
-        </xsl:if>
-        <xsl:text> </xsl:text>
-        <xsl:value-of select="$style/@ALIGN"/>
-        <xsl:text> </xsl:text>
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
@@ -219,7 +205,6 @@ je deman-
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
-
   <xsl:template match="alto:SP">
     <xsl:text> </xsl:text>
   </xsl:template>
