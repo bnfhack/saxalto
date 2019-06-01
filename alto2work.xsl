@@ -26,6 +26,7 @@
     <xsl:apply-templates select="*"/>
   </xsl:template>
   <xsl:template match="alto:TextBlock">
+    <!-- TODO sort lines by vertical pos -->
     <xsl:variable name="style">
       <xsl:call-template name="style"/>
     </xsl:variable>

@@ -22,7 +22,8 @@ if (php_sapi_name() == "cli") {
   }
   else if ($action == "threads") {
     if (!isset(Alto::$conf['xmldir'])) die("conf.php['xmldir'] ?\n");
-    $writer = fopen(Alto::$conf['altolist'], "w");
+    $writer = fopen(Alto::$conf['altolist'], "w+");
+    echo "Read ".Alto::$conf['xmldir']."\n";
     // Alto::listzip(Alto::$conf['srcdir'], $writer);
     Alto::listxml(Alto::$conf['xmldir'], $writer);
     fclose($writer);
@@ -406,6 +407,7 @@ FROM gallica, document WHERE gallica.id = ? AND gallica.document = document.id
       if (is_dir($srcdir.$entry)) self::listxml($srcdir.$entry, $writer);
       $ext = pathinfo($entry, PATHINFO_EXTENSION);
       if ($ext != "xml") continue;
+      echo $srcdir.$entry."\n";
       fwrite($writer, $srcdir.$entry."\n");
     }
   }
